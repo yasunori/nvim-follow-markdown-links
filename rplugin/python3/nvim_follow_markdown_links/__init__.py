@@ -32,7 +32,7 @@ class FollowMarkdownLinksPlugin:
         # List of (Path, cursor position) tuples
         self.buffer_stack = []
 
-    def markdown_link(self, crow, ccol, line):
+    def markdown_link(self, crow, ccol, line, ccol_byte_offset):
         # Index in string containing the start of the link
         # ccol + 1 so that we match when the cursor is *on* the opener
         start_pos = line.rfind('[', 0, ccol + 1)
@@ -154,17 +154,22 @@ class FollowMarkdownLinksPlugin:
 
     @pynvim.function('FollowMarkdownLink', sync=True)
     def follow_markdown_link(self, _):
+        self.follow_markdown_link_main(new_window_flg=False)
+
+    @pynvim.function('FollowMarkdownLinkInNewWindow', sync=True)
+    def follow_markdown_link_in_new_window(self, _):
+        self.follow_markdown_link_main(new_window_flg=True)
+
+    def follow_markdown_link_main(self, new_window_flg):
         # Cursor position
         crow, ccol_byte_offset = self.nvim.current.window.cursor
-        self.debug(str(ccol_byte_offset))
         # Current line buffer
         line = self.nvim.current.line
         # real ccol
         sub_b = bytearray(line, encoding="utf-8")[0: ccol_byte_offset].decode()
         ccol = len(sub_b)
-        self.debug(str(ccol))
-        self.markdown_link(crow, ccol, line)
-        self.note_link(crow, ccol, line, ccol_byte_offset, _[0])
+        self.markdown_link(crow, ccol, line, ccol_byte_offset)
+        self.note_link(crow, ccol, line, ccol_byte_offset, new_window_flg)
 
     @pynvim.function('PreviousMarkdownBuffer', sync=True)
     def previous_buffer(self, _):
@@ -180,6 +185,40 @@ class FollowMarkdownLinksPlugin:
 
         # Restore the cursor position
         self.nvim.current.window.cursor = cursor
+
+    @pynvim.function('PreviousMarkdownFile', sync=True)
+    def previous_file(self, _):
+        self.goto_next_file(reverse=True)
+
+    @pynvim.function('NextMarkdownFile', sync=True)
+    def next_file(self, _):
+        self.goto_next_file(reverse=False)
+
+    def goto_next_file(self, reverse):
+        current_dir = pathlib.Path(self.nvim.eval('expand("%:p:h")'))
+        files = sorted([str(f) for f in list(current_dir.glob('*.md'))], reverse=reverse)
+        f = self.nvim.eval('expand("%:t")')  # current file name
+        i = -1
+        for j, file in enumerate(files):
+            if f in file:
+                i = j
+                break
+
+        if i < 0:
+            return  # do nothing
+
+        i = i + 1
+        if i >= len(files):
+            return  # do nothing
+
+        crow, ccol_byte_offset = self.nvim.current.window.cursor
+        buffer_path = pathlib.Path(self.nvim.eval('expand("%:p")'))
+        target_path = pathlib.Path(files[i]).expanduser()  # ~/を展開
+        self.buffer_stack.append((buffer_path, (crow, ccol_byte_offset)))
+
+        self.debug('Opening path: {}'.format(target_path))
+        self.nvim.command('w')
+        self.nvim.command('edit {}'.format(target_path))
 
     def debug(self, msg):
         if self.config['debug']:
